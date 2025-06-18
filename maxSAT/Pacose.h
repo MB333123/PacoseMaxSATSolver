@@ -57,7 +57,7 @@ public:
   ~Pacose();
 
   uint32_t SolveProcedure(ClauseDB& clauseDB);
-  bool ExternalPreprocessing(ClauseDB& clauseDB);
+  uint32_t ExternalPreprocessing(ClauseDB& clauseDB);
   // void CallMaxPre2(ClauseDB &clauseDB);
 
   uint32_t CalculateNextResult();
@@ -141,8 +141,6 @@ public:
 
   bool AddClause(std::vector<uint32_t> &clause);
 
-  uint32_t NewVariable();
-  void NewVariables(uint32_t noVars);
   uint32_t GetModel(int var);
 
   uint32_t Solve();

@@ -119,6 +119,7 @@ bool MultipleCascade::DivideAndConnectCascades(
           true);
   }
 
+  delete _tareCascade;
   _tareCascade = new Cascade(_dgpw, this, _solveTareCascadeOnlyByTares);
 
   // solve tares like cascade
@@ -279,6 +280,7 @@ bool MultipleCascade::DivideSoftClauseVector(
     _setting->cascadeDivider = _cascadeDivider;
   }
 
+  delete _mainCascade;
   _mainCascade = new Cascade(_dgpw, this, false);
 
   _highestMultiplicator = 0;

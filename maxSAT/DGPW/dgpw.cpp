@@ -112,14 +112,13 @@ void DGPW::IncrementalReset() {
 }
 
 DGPW::~DGPW() {
-  for (uint32_t i = 0; i != _sorterTree.size(); ++i) {
-    for (uint32_t j = 0; j != _sorterTree[i].size(); ++j) {
-      delete _sorterTree[i][j];
-    }
-  }
   delete _timeVariables;
   delete _mainCascade;
   delete _mainMultipleCascade;
+
+  for (auto *ptr : _allocatedBuckets) delete ptr;
+  for (auto *ptr : _allocatedSorters) delete ptr;
+  for (auto *ptr : _allocatedTrees) delete ptr;
 
   // the following are destroyed elsewhere!
   //  SATSolverProxy *_solver;
@@ -381,6 +380,7 @@ uint32_t DGPW::MaxSolveWeightedPartial(
   _hasEncoding = false;
   //    _dgpwSetting->application = WEIGHTEDMAXSAT;
 
+  delete _timeVariables;
   _timeVariables = new TimeVariables();
   TimeMeasurement totalTime(&_timeVariables->total, true);
 
@@ -439,6 +439,7 @@ uint32_t DGPW::MaxSolveWeightedPartial(
   // CheckAllWeightedConflictingSoftclauses();
   if (_dgpwSetting->mcDivideStrategy != SOLVEINNORMALCASCADEMODE) {
     _dgpwSetting->encodeStrategy = ENCODEONLYIFNEEDED; // cone of influence encoding
+    delete _mainMultipleCascade;
     _mainMultipleCascade = new MultipleCascade(
         this, _dgpwSetting->onlyByTares, _dgpwSetting->tareCascadeOnlyByTares,
         _dgpwSetting->cascadeDivider, _dgpwSetting->maxBucketSize,

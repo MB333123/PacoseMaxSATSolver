@@ -51,10 +51,12 @@ namespace DGPW {
 #define UNSAT 20
 #endif
 
+class Bucket;
 class Sorter;
 class Cascade;
 class MultipleCascade;
 struct TimeVariables;
+struct TotalizerEncodeTree;
 
 // The "MaxAntom" class.
 class DGPW {
@@ -142,6 +144,7 @@ class DGPW {
   friend class Bucket;
   friend class Sorter;
   friend class Counter;
+  friend struct TotalizerEncodeTree;
 
   uint64_t _sumOfSoftWeights;
 
@@ -274,6 +277,10 @@ class DGPW {
 
   // reset for incremental MaxSAT Solving
   void IncrementalReset();
+
+  std::vector<Bucket*> _allocatedBuckets;
+  std::vector<Sorter*> _allocatedSorters;
+  std::vector<TotalizerEncodeTree*> _allocatedTrees;
 };
 }  // namespace DGPW
 } // Namespace Pacose

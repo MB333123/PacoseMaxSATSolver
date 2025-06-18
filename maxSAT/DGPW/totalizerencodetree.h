@@ -34,18 +34,18 @@ namespace Pacose {
 namespace DGPW {
 
 struct TotalizerEncodeTree {
-  TotalizerEncodeTree(uint32_t size)
+  TotalizerEncodeTree(DGPW *dgpw, uint32_t size)
       : _encodedOutputs(size, 0), _leaves(), _leavesWeights(), _tares(),
         _size(size), _depth(0), _howOftenUsed(0), _maxPos(0),
         _allOutputsEncoded(false), _hasBeenBucketBefore(false),
         _onesEncoded(false), _isBottomBucket(true), _everyNthOutput(1),
         _exponent(UINT32_MAX), _verbosity(0), _child1(nullptr),
-        _child2(nullptr) {}
-
-  ~TotalizerEncodeTree() {
-    delete _child1;
-    delete _child2;
+        _child2(nullptr) {
+    assert(dgpw != NULL);
+    dgpw->_allocatedTrees.push_back(this);
   }
+
+  ~TotalizerEncodeTree() {}
 
   // the inputs are the _encodedOutputs of the children.
   std::vector<uint32_t> _encodedOutputs;
@@ -480,18 +480,18 @@ struct TotalizerEncodeTree {
    * @param inputVector Pointer to whole given inputVector.
    * @return            Depth of tree, root has greatest depth.
    */
-  uint32_t CreateOutputTreeReturnMaxDepth(uint32_t lo, uint32_t hi,
+  uint32_t CreateOutputTreeReturnMaxDepth(DGPW *dgpw, uint32_t lo, uint32_t hi,
                                           std::vector<uint32_t> *inputVector) {
 
     if ((hi - lo) > 1) {
       assert(hi > lo);
       uint32_t m = ((hi - lo) >> 1);
-      _child1 = new TotalizerEncodeTree(m);
+      _child1 = new TotalizerEncodeTree(dgpw, m);
       uint32_t depth1 = _child1->CreateOutputTreeReturnMaxDepth(
-          lo, lo + m, inputVector);
-      _child2 = new TotalizerEncodeTree(_size - m);
+          dgpw, lo, lo + m, inputVector);
+      _child2 = new TotalizerEncodeTree(dgpw, _size - m);
       uint32_t depth2 = _child2->CreateOutputTreeReturnMaxDepth(
-          lo + m, hi, inputVector);
+          dgpw, lo + m, hi, inputVector);
       _depth = (depth1 > depth2) ? depth1 : depth2;
     } else {
       assert(hi - lo == 1);

@@ -45,9 +45,10 @@ Sorter::Sorter(uint32_t size, DGPW *dgpw)
       _proceeded(false), _proceedNext(false), _tarePosition(0),
       _sorterType(_setting->networkType) {
   assert(dgpw != NULL);
+  dgpw->_allocatedSorters.push_back(this);
 }
 
-Sorter::~Sorter(void) { delete _outputTree; }
+Sorter::~Sorter(void) {}
 
 // PROOF: If new parts are encoded then we need a proof for that.
 uint32_t Sorter::GetOrEncodeOutput(uint32_t position, bool encodeOnlyOnes) {
@@ -366,11 +367,11 @@ void Sorter::CreateTotalizerEncodeTree() {
   if (_outputTree != nullptr)
     return;
 
-  _outputTree = new TotalizerEncodeTree(static_cast<uint32_t>(_outputs.size()));
+  _outputTree = new TotalizerEncodeTree(_dgpw, static_cast<uint32_t>(_outputs.size()));
   // give boundaries!
 
   _outputTree->CreateOutputTreeReturnMaxDepth(
-      0, static_cast<uint32_t>(_outputs.size()), &_outputs);
+      _dgpw, 0, static_cast<uint32_t>(_outputs.size()), &_outputs);
 }
 
 uint32_t Sorter::TotalizerEncodeOnes(TotalizerEncodeTree *tree,

@@ -1056,7 +1056,7 @@ void Pacose::ChooseEncoding() {
 //   // }
 // }
 
-bool Pacose::ExternalPreprocessing(ClauseDB &clauseDB) {
+uint32_t Pacose::ExternalPreprocessing(ClauseDB &clauseDB) {
 
   // CallMaxPre2(clauseDB);
   // count soft clauses after
@@ -1117,26 +1117,26 @@ bool Pacose::ExternalPreprocessing(ClauseDB &clauseDB) {
         // Border Case, empty hard clause cannot be satisfied, thus the
         // instance is UNSATISFIABLE!
         std::cout << "s UNSATISFIABLE" << std::endl;
-        return false;
+        return 20;
       }
       _hasHardClauses = true;
-      std::vector<uint32_t> *clause = new std::vector<uint32_t>;
+      std::vector<uint32_t> clause;
       for (auto lit : clauseDB.clauses[i]) {
-        clause->push_back(clauseDB.SignedTouint32_tLit(lit));
+        clause.push_back(clauseDB.SignedTouint32_tLit(lit));
       }
       // _satSolver->AddClause(clauseDB.clauses[i]);
-      AddClause(*clause);
+      AddClause(clause);
     } else {
       // soft clause
       if ((clauseDB.clauses[i].empty())) {
         emptyWeight += clauseDB.weights[i];
         continue;
       }
-      std::vector<uint32_t> *sclause = new std::vector<uint32_t>;
+      std::vector<uint32_t> sclause;
       for (auto lit : clauseDB.clauses[i]) {
-        sclause->push_back(clauseDB.SignedTouint32_tLit(lit));
+        sclause.push_back(clauseDB.SignedTouint32_tLit(lit));
       }
-      AddSoftClause(*sclause, clauseDB.weights[i]);
+      AddSoftClause(sclause, clauseDB.weights[i]);
     }
     _nbOfOrigPlusSCRelaxVars = _satSolver->GetNumberOfVariables();
   }
@@ -1164,19 +1164,23 @@ bool Pacose::ExternalPreprocessing(ClauseDB &clauseDB) {
       PrintResult();
       // TODO-Dieter: Check the way empty soft clauses are treated. They should be rewritten by objective update rule. 
       // std::cout << "v " << std::endl;
-      return false;
+      SaveModel();
+      return 10;
     }
     uint32_t rv = _satSolver->Solve();
     if (rv == 10) {
       std::cout << "s OPTIMUM FOUND" << std::endl;
       std::cout << "o " << emptyWeight << std::endl;
       PrintResult();
+      SaveModel();
+      return 10;
     } else if (rv == 20) {
       std::cout << "s UNSATISFIABLE" << std::endl;
+      return 20;
     } else {
       std::cout << "s UNKNOWN" << std::endl;
+      return 0;
     }
-    return false;
   }
 
   if (emptyWeight > 0) {
@@ -1197,15 +1201,15 @@ bool Pacose::ExternalPreprocessing(ClauseDB &clauseDB) {
   clauseDB.clauses.clear();
   clauseDB.weights.clear();
 
-  return true;
+  return 30;
 }
 
 
 uint32_t Pacose::SolveProcedure(ClauseDB &clauseDB) {
-
-  if (!ExternalPreprocessing(clauseDB)) {
-    return 0;
-  };
+  uint32_t preResult = ExternalPreprocessing(clauseDB);
+  if (preResult != 30) {
+    return preResult;
+  }
 
   _settings.formulaIsDivided = true;
   double timeStart;
@@ -2451,6 +2455,13 @@ void Pacose::CalcGCDAndDivideIfPossible() {
 
 void Pacose::SetSumOfSoftWeights(uint64_t softWeights) {
   _sumOfSoftWeights = softWeights;
+}
+
+uint32_t Pacose::GetModel(int var) {
+  if (var >= _bestModel.size()) {
+    return 0;
+  }
+  return _bestModel[var];
 }
 
 } // Namespace Pacose

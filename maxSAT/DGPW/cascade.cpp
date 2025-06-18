@@ -60,11 +60,11 @@ Cascade::Cascade(DGPW *dgpw, MultipleCascade *multipleCascade, bool onlyByTares)
 }
 
 Cascade::~Cascade() {
-  for (auto SCT : _softClauseTree) {
+  for (auto SCT : _processingSoftClauseTree) {
     delete SCT;
   }
-  for (auto bucket : _structure) {
-    delete bucket;
+  for (auto SCT : _softClauseTree) {
+    delete SCT;
   }
 }
 
@@ -324,6 +324,12 @@ void Cascade::CreateSoftClauseTree(std::vector<SoftClause *> *softClauses,
   if (_setting->verbosity > 6)
     std::cout << __PRETTY_FUNCTION__ << std::endl;
 
+  for (auto SCT : _processingSoftClauseTree) {
+    delete SCT;
+  }
+  for (auto SCT : _softClauseTree) {
+    delete SCT;
+  }
   _processingSoftClauseTree.clear();
   _softClauseTree.clear();
 
@@ -366,6 +372,12 @@ void Cascade::PartitionSoftClauseTree(
   if (_setting->verbosity > 6)
     std::cout << __PRETTY_FUNCTION__ << std::endl;
 
+  for (auto SCT : _processingSoftClauseTree) {
+    delete SCT;
+  }
+  for (auto SCT : _softClauseTree) {
+    delete SCT;
+  }
   _processingSoftClauseTree.clear();
   _softClauseTree.clear();
 

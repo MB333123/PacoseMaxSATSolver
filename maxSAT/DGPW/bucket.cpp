@@ -54,6 +54,7 @@ Bucket::Bucket(DGPW *dgpw, Cascade *cascade, uint16_t position)
       _sumSoftWeightsOfTareCascade(0), _solvingState(SINGLECASCADE),
       _encoded(false), _encodeTreeGenerated(false), _isLastBucket(false) {
   assert(dgpw != NULL);
+  dgpw->_allocatedBuckets.push_back(this);
   // As long as we take the same base for the whole cascade.
   _base = _cascade->_base;
   if (position != static_cast<uint16_t>(~0))
@@ -76,7 +77,7 @@ void Bucket::IncrementalReset() {
 }
 
 // Destructor
-Bucket::~Bucket(void) { delete _sorter; }
+Bucket::~Bucket(void) {}
 
 uint32_t Bucket::size(bool reduceByFactorNthOutput) {
   if (_encodeTreeGenerated)
@@ -433,7 +434,7 @@ void Bucket::CreateTotalizerEncodeTree(bool lastBucket) {
     if (_setting->verbosity > 6)
       std::cout << rnd << " sorterSizes.size(): " << sorterSizes.size()
                 << std::endl;
-    TotalizerEncodeTree *TotTree = new TotalizerEncodeTree(0);
+    TotalizerEncodeTree *TotTree = new TotalizerEncodeTree(_dgpw, 0);
     TotTree->_child1 = sorterSizes.begin()->second;
     if (_setting->verbosity > 6)
       std::cout << rnd << " child1 outputs.size(): "
@@ -471,7 +472,7 @@ void Bucket::CreateTotalizerEncodeTree(bool lastBucket) {
       std::cout << rnd << " nextLevelTree != nullptr && sorterSizes.size() == 1"
                 << std::endl;
     assert(sorterSizes.size() == 1);
-    TotalizerEncodeTree *TotTree = new TotalizerEncodeTree(0);
+    TotalizerEncodeTree *TotTree = new TotalizerEncodeTree(_dgpw, 0);
     TotTree->_child1 = sorterSizes.begin()->second;
     sorterSizes.erase(sorterSizes.begin());
     TotTree->_child2 = nextLevelTree;
@@ -526,7 +527,6 @@ void Bucket::CreateTotalizerEncodeTree(bool lastBucket) {
     CutMaxPos(true);
   }
   _encodeTreeGenerated = true;
-  // output tree is deleted, if _sorter is deleted!
   // if (lastBucket) {
   //   _sorter->_outputTree->CalculateExponents();
   // }
