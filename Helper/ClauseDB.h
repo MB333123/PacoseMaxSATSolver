@@ -27,6 +27,7 @@ inline uint32_t SignedTouint32_tLit(int literal) {
 
 };
 
+
 } // Namespace Pacose
 
 #endif // CLAUSEDB_H
