@@ -90,7 +90,7 @@ int main(int argc, char **argv) {
   app.add_set("-e, --encoding", encoding,
               {"dgpw", "warn", "bail", "asin", "ogaw", "bailw2", "wmt", "mrwto",
                "mrwto2", "mrwto19", "mrwto19_2", "qauto", "auto", "pac1819",
-               "pac20", "qms19"},
+               "pac20", "qms19", "wallace"}, // Neu
               " \t Different MaxSAT encoding to choose from.", true);
 
   app.add_option("-p, --printModel", settings->_printModel,
@@ -439,6 +439,9 @@ int main(int argc, char **argv) {
     settings->_encoding = HEURISTIC20;
   } else if (encoding == "qms19") {
     settings->_encoding = QMAXSAT19;
+
+  } else if (encoding == "wallace") { // Neu
+    settings->_encoding = WALLACE;
   }
 
   settings->percentOff =
@@ -567,6 +570,5 @@ int main(int argc, char **argv) {
   std::cout << "c time...................: " << tmpTimeNow - timeStart
             << std::endl;
 
-  delete pacose;
   return 0;
 }
