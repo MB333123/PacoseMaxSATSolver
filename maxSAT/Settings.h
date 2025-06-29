@@ -49,7 +49,10 @@ enum EncodingType
   HEURISTIC20,        // HEURISTIC 20 Competition, choosing between warners and dgpw
   HEURISTIC1819,      // HEURISTIC 18 Competition, choosing between warners and
                       // dgpw
-  QMAXSAT19
+  QMAXSAT19,
+
+  WALLACE,             // Neu
+
 };
 
 enum SolverType
@@ -273,6 +276,9 @@ public:
       return "H-Pac1819";
     if (encoding == QMAXSAT19)
       return "QMSat19";
+    if (encoding == WALLACE) // Neu
+      return "wallace";
+
     return "invalid encoding";
   }
 

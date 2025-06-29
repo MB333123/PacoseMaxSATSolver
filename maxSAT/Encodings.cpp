@@ -38,6 +38,23 @@ SOFTWARE.
 #include "../solver-proxy/SATSolverProxy.h"
 #include "assert.h"
 
+// Neu
+#include <iostream>
+#include <cassert>
+#include <cstdlib>
+#include <map>
+#include <vector>
+#include <sstream>  // Wichtig für std::ostringstream
+#include <fstream>
+#include <iomanip>
+#include <algorithm> // für reverse ()
+#include "ClauseDB.h"
+#include "Softclause.h"
+
+
+
+
+
 
 namespace Pacose {
 /*
@@ -49,6 +66,48 @@ namespace Pacose {
 
 //=================================================================================================
 
+std::ofstream cnfOut("debug_output.cnf");  // Datei öffnen
+std::streampos headerPos = cnfOut.tellp();
+//cnfOut << "p cnf 0 0\n";  // Platzhalter
+
+// Optional: Diese beiden Variablen global in der Funktion mitzählen
+int numClauses = 0;
+int maxVar = 0;
+
+void writeClause(std::ofstream &out, std::vector<uint32_t> literals, int &numClauses, int &maxVar, bool writeHeader = false) {
+    if (writeHeader) {
+        out << "p cnf " << maxVar << " " << numClauses << "\n";
+        return;
+    }
+    bool nonEmpty = false;
+    for (auto lit : literals) {
+        if ((lit >> 1) == 0) continue; // Überspringe Variable 0 (Dummy)
+        int var = lit >> 1;
+        if (lit & 1) out << "-";
+        out << var << " ";
+        maxVar = std::max(maxVar, var);
+        nonEmpty = true;
+    }
+    if (nonEmpty) {
+        out << "0" << std::endl;
+        ++numClauses;
+    }
+}
+
+
+
+// Neu
+
+// Hilfsfunktion: Umwandlung d. Gewichte in Binärschreibweise, bislang nur 1 !?
+// typen geändert für größere eingaben:
+std::vector<uint32_t> toBinary(uint64_t weight) {
+    std::vector<uint32_t> bits;
+    while (weight > 0) {
+        bits.push_back(weight % 2);
+        weight /= 2;
+    }
+    return bits;
+}
 /*
   Cardinality Constraints:
   Joost P. Warners, "A linear-time transformation of linear inequalities
@@ -63,8 +122,11 @@ void Encodings::lessthan(std::vector<uint32_t> &linking,
                          long long int divisor,  // koshi 13.10.04
                          std::vector<long long int> &cc, SATSolverProxy &S,
                          EncodingType encoding) {
-  assert(k > 0);
+ 
+ 
+  if (encoding != WALLACE)  {assert(k > 0);}                       
   _relaxLit = S.NewVariable() << 1;
+  
   //  std::cout << "new relaxlit: " << _relaxLit << std::endl;
   //  if (_settings->verbosity > 3) {
   //    std::cout << "LKs: " << linking.size() << ": ";
@@ -198,13 +260,229 @@ void Encodings::lessthan(std::vector<uint32_t> &linking,
         S.CommitClause();
       }
     }
+
+    
+   } else if (encoding == WALLACE) { 
+    
+    std::vector<uint32_t> aBits;  
+    std::vector<uint32_t> bBits = linking;     
+    
+    std::vector<uint32_t> boundBits = toBinary(k);
+
+    for (size_t i = 0; i < boundBits.size(); ++i) {
+      uint32_t a = S.NewVariable() << 1;
+      aBits.push_back(a);
+      uint32_t lit = (boundBits[i] == 1) ? a : (a ^ 1);
+      
+
+      std::cout << "boundBits[" << i << "] = " << boundBits[i]
+              << " → a = " << a
+              << ", lit = " << lit
+              << " (" << ((lit & 1) ? "-" : "+") << (lit >> 1)
+              << ")" << std::endl;
+
+
+      
+
+      
+      S.ResetClause(); S.NewClause(); S.AddLiteral(lit); S.AddLiteral(_relaxLit); S.CommitClause();
+      writeClause(cnfOut, {lit}, numClauses, maxVar); }
+
+
+    // Für eine optimierte Version:
+    //uint32_t assumptions[] = {aBits[3], 0};  
+    //uint32_t assumptions1[] = {aBits[2], 0};
+    //S.AddAssumption(assumptions1);
+    //S.AddAssumption(assumptions);S.CommitClause();
+    
+    // lit_zero, falls k kleiner als Eingabe aus dem Carry - Rippel addierer:
+    uint32_t lit_zero = S.NewVariable() << 1;
+
+    /*auto simplified = [&](std::vector<uint32_t> clause) {
+        std::vector<uint32_t> filtered;
+        bool isAlwaysTrue = false;
+        for (uint32_t lit : clause) {
+          if (lit == (lit_zero ^ 1)) {
+            isAlwaysTrue = true;
+            break;
+          } else if (lit != lit_zero) {
+            filtered.push_back(lit);
+          }
+        }
+        if (!isAlwaysTrue && !filtered.empty()) {
+          S.ResetClause(); S.NewClause();
+          for (uint32_t lit : filtered) S.AddLiteral(lit);
+          S.CommitClause();
+          writeClause(cnfOut, filtered, numClauses, maxVar);
+        }
+      };*/
+
+    auto simplified = [&](std::vector<uint32_t> clause) {
+      std::vector<uint32_t> filtered;
+      bool isAlwaysTrue = false;
+      for (uint32_t lit : clause) {
+        if (lit == (lit_zero ^ 1)) {
+          isAlwaysTrue = true;
+          break;
+        } else if (lit != lit_zero) {
+          filtered.push_back(lit);
+        }
+      }
+
+      if (isAlwaysTrue) {
+        // Diese Klausel ist immer erfüllt – tue nichts
+        return;
+      }
+
+      if (filtered.empty()) {
+        std::cerr << "[WARN] simplified(): Leere Klausel erzeugt → CNF ist UNSAT.\n";
+        S.ResetClause(); S.NewClause(); S.CommitClause();
+        writeClause(cnfOut, {}, numClauses, maxVar);
+        return;
+      }
+
+      // Normale gültige Klausel
+      S.ResetClause(); S.NewClause();
+      for (uint32_t lit : filtered) S.AddLiteral(lit);
+      S.CommitClause();
+      writeClause(cnfOut, filtered, numClauses, maxVar);
+    };
+
+    //simplified({lit_zero ^ 1, _relaxLit});
+    S.ResetClause(); S.NewClause(); S.AddLiteral(lit_zero ^ 1); S.AddLiteral(_relaxLit); S.CommitClause();
+    writeClause(cnfOut, {lit_zero ^ 1}, numClauses, maxVar);
+    
+    size_t n = std::max(aBits.size(), bBits.size());
+    
+
+    // Das ist vermutlich falsch:
+    /*while (aBits.size() < n) {
+    uint32_t pad = S.NewVariable() << 1;
+    S.ResetClause(); S.NewClause(); S.AddLiteral(pad ^ 1); S.CommitClause();  // pad = 0
+    writeClause(cnfOut, {pad ^ 1}, numClauses, maxVar);
+    aBits.push_back(pad);
+}*/
+
+    // Das braucht es nicht:
+    //std::reverse(aBits.begin(), aBits.end());
+    //std::reverse(bBits.begin(), bBits.end());
+
+    while (aBits.size() < n) aBits.push_back(lit_zero);
+    while (bBits.size() < n) bBits.push_back(lit_zero);
+
+    std::cout << "[DEBUG] a <= b :\n";
+    std::cout << "[DEBUG] a: Summe er gewichte die Wahr sind.\n";
+    std::cout << "[DEBUG] b: Ergebnis aus dem Carry - Ripple Addierer.\n";
+
+    for (size_t i = 0; i < n; ++i) {
+ 
+        uint32_t a = aBits[i];
+        uint32_t b = bBits[i];
+        std::cout << "  Bit " << i << ": a[" << i << "] = x" << (a >> 1)
+                  << ((a & 1) ? "¬" : "") << "  "
+                  << "b[" << i << "] = x" << (b >> 1)
+                  << ((b & 1) ? "¬" : "") << "\n";
+                }
+
+        uint32_t a = aBits[0], b = bBits[0];
+        uint32_t q = S.NewVariable() << 1;
+        
+        simplified({a, b ^ 1, q, _relaxLit});
+        //S.ResetClause(); S.NewClause(); S.AddLiteral(a); S.AddLiteral(b ^ 1); S.AddLiteral(q); S.AddLiteral(_relaxLit); S.CommitClause();
+        //writeClause(cnfOut, {a, b ^ 1, q}, numClauses, maxVar); 
+
+        simplified({a, b, q, _relaxLit});
+        //S.ResetClause(); S.NewClause(); S.AddLiteral(a); S.AddLiteral(b); S.AddLiteral(q); S.AddLiteral(_relaxLit); S.CommitClause();
+        //writeClause(cnfOut, {a, b, q}, numClauses, maxVar);
+        
+       simplified({a ^ 1, b ^ 1, q, _relaxLit});
+        //S.ResetClause(); S.NewClause(); S.AddLiteral(a ^ 1); S.AddLiteral(b ^ 1); S.AddLiteral(q); S.AddLiteral(_relaxLit); S.CommitClause();
+       //writeClause(cnfOut, {a ^ 1, b ^ 1, q}, numClauses, maxVar);
+
+        simplified({a ^ 1, b, q ^ 1, _relaxLit});
+        //S.ResetClause(); S.NewClause(); S.AddLiteral(a ^ 1); S.AddLiteral(b); S.AddLiteral(q ^ 1); S.AddLiteral(_relaxLit); S.CommitClause();
+        //writeClause(cnfOut, {a ^ 1, b, q ^ 1}, numClauses, maxVar);
+        
+        uint32_t tmp_q = q;
+        
+        for (size_t i = 1; i < n; ++i) {
+          a = aBits[i];
+          b = bBits[i];
+          uint32_t q = S.NewVariable() << 1;
+          
+          simplified({a, b ^ 1, q, _relaxLit});
+          //S.ResetClause(); S.NewClause(); S.AddLiteral(a); S.AddLiteral(b ^ 1); S.AddLiteral(q); S.AddLiteral(_relaxLit); S.CommitClause();
+          //writeClause(cnfOut, {a, b ^ 1, q}, numClauses, maxVar);
+          
+          simplified({b, a, tmp_q ^ 1, q, _relaxLit});
+          //S.ResetClause(); S.NewClause(); S.AddLiteral(b); S.AddLiteral(a); S.AddLiteral(tmp_q ^ 1); S.AddLiteral(q); S.AddLiteral(_relaxLit); S.CommitClause();
+        //writeClause(cnfOut, {b, a, tmp_q ^ 1, q}, numClauses, maxVar);
+
+
+          simplified({a ^ 1, b ^ 1, tmp_q ^ 1, q, _relaxLit});
+          //S.ResetClause(); S.NewClause(); S.AddLiteral(a ^ 1); S.AddLiteral(b ^ 1); S.AddLiteral(tmp_q ^ 1); S.AddLiteral(q); S.AddLiteral(_relaxLit); S.CommitClause();
+          //writeClause(cnfOut, {a ^ 1, b ^ 1, tmp_q ^ 1, q}, numClauses, maxVar);
+          
+          simplified({a ^ 1, b, q ^ 1, _relaxLit});
+          //S.ResetClause(); S.NewClause(); S.AddLiteral(a ^ 1); S.AddLiteral(b); S.AddLiteral(q ^ 1); S.AddLiteral(_relaxLit); S.CommitClause();
+          //writeClause(cnfOut, {a ^ 1, b, q ^ 1}, numClauses, maxVar);
+
+          simplified({a ^ 1, tmp_q, q ^ 1, _relaxLit});
+          //S.ResetClause(); S.NewClause(); S.AddLiteral(a ^ 1); S.AddLiteral(tmp_q); S.AddLiteral(q ^ 1); S.AddLiteral(_relaxLit); S.CommitClause();
+          //writeClause(cnfOut, {a ^ 1, tmp_q, q ^ 1}, numClauses, maxVar);
+
+          simplified({b, tmp_q, q ^ 1, _relaxLit});
+          //S.ResetClause(); S.NewClause(); S.AddLiteral(b); S.AddLiteral(tmp_q); S.AddLiteral(q ^ 1); S.AddLiteral(_relaxLit); S.CommitClause();
+          //writeClause(cnfOut, {b, tmp_q, q ^ 1}, numClauses, maxVar);
+        
+          if (i == n - 1) {
+            
+          //simplified({q, _relaxLit});
+          S.ResetClause(); S.NewClause(); S.AddLiteral(q); S.AddLiteral(_relaxLit); S.CommitClause();
+          writeClause(cnfOut, {q}, numClauses, maxVar);}
+          
+          tmp_q = q;  
+        }
+
+        std::cout << "[DEBUG] Modell für aBits:" << std::endl;
+        for (size_t i = 0; i < aBits.size(); ++i) {
+            uint32_t lit = aBits[i];
+            uint32_t var = lit >> 1;
+            bool isNeg = lit & 1;
+            uint32_t val = S.GetModel(var); // 0 = falsch, 1 = wahr
+            uint32_t interpreted = isNeg ? 1 - val : val;
+            std::cout << "  a[" << i << "] = " << (isNeg ? "¬" : "") << "x" << var
+                      << " → " << interpreted << std::endl;
+        }
+
+        std::cout << "[DEBUG] Modell für bBits:" << std::endl;
+        for (size_t i = 0; i < bBits.size(); ++i) {
+            uint32_t lit = bBits[i];
+            uint32_t var = lit >> 1;
+            bool isNeg = lit & 1;
+            uint32_t val = S.GetModel(var);
+            uint32_t interpreted = isNeg ? 1 - val : val;
+            std::cout << "  b[" << i << "] = " << (isNeg ? "¬" : "") << "x" << var
+                      << " → " << interpreted << std::endl;
+        }
+
   }
+
+
+     // funktioniert nicht, überschreibt die erste Zeile:
+    //cnfOut.seekp(0, std::ios::beg); 
+    //cnfOut << "p cnf " << maxVar << " " << numClauses << "\n";
+
+     
 
   _relaxLit = _relaxLit ^ 1;
   S.AddAssumption(&_relaxLit);
   _relaxLit = _relaxLit ^ 1;
   //  std::cout << "assumption: " << _relaxLit << std::endl;
 }
+
+
+
 
 // uemura 20161128
 void Encodings::lessthanMR(
@@ -351,10 +629,908 @@ void Encodings::lessthanMR(
   _relaxLit = _relaxLit ^ 1;
 }
 
+// Neu
+
+
+
+
+std::string litToStr(uint32_t lit) {
+    std::ostringstream os;
+    os << ((lit & 1) ? "¬" : "") << "x" << (lit >> 1) << " (lit=" << lit << ")";
+    return os.str();
+}
+
+
+
+
+
+/*
+void writeClause(std::ofstream &out, std::vector<uint32_t> literals, int &numClauses, int &maxVar) {
+    for (auto lit : literals) {
+        if ((lit >> 1) == 0) continue;
+        int var = lit >> 1;
+        if (lit & 1) out << "-";
+        out << var << " ";
+        maxVar = std::max(maxVar, var);
+    }
+    out << "0"<< std::endl; 
+    ++numClauses;
+}*/
+
+void printBitLayerMap(const std::string& label, const std::map<int, std::vector<uint32_t>>& layers) {
+    std::cout << "[DEBUG] " << label << ":\n";
+    for (const auto& [bit, vec] : layers) {
+        std::cout << "  Bit " << bit << ":";
+        for (uint32_t lit : vec) {
+            std::cout << " x" << (lit >> 1) << ((lit & 1) ? " (¬)" : "");
+        }
+        std::cout << std::endl;
+    }
+}
+
+// Test funktion zum erzeugen neuer variablen für die Eingaben:
+void copyLiteral(uint32_t old_lit, uint32_t new_lit, SATSolverProxy &S) {
+    // Gleichheit per CNF: a ≡ b ↔ (¬a ∨ b) ∧ (a ∨ ¬b)
+    uint32_t neg_old = old_lit ^ 1;
+    uint32_t neg_new = new_lit ^ 1;
+
+    S.ResetClause(); S.NewClause();
+    S.AddLiteral(&neg_old); S.AddLiteral(&new_lit);
+    S.CommitClause();
+
+    S.ResetClause(); S.NewClause();
+    S.AddLiteral(&old_lit); S.AddLiteral(&neg_new);
+    S.CommitClause();
+}
+
+void Encodings::genWallace(
+    std::vector<long long int> &weights,
+    std::vector<uint32_t> &blockings,
+    long long int max,
+    int k,
+    SATSolverProxy &S,
+    std::vector<uint32_t> &lits,
+    std::vector<uint32_t> &linkingVar,
+    std::vector<long long int> &linkingWeight,
+    const std::vector<SoftClause*>& softClauses
+) {
+  
+  for (size_t i = 0; i < softClauses.size(); ++i) {
+    const SoftClause* sc = softClauses[i];
+    std::cout << "SoftClause " << i << " (Gewicht: " << sc->weight << ") Literale: ";
+    for (uint32_t lit : sc->clause) {
+      std::cout << lit << " ";
+    }
+    std::cout << std::endl;
+  }
+  
+  
+  // Braucht es vielleicht nicht:
+  linkingVar.clear();
+  linkingWeight.clear();
+
+  // Platzhalter für die Debug-CNF:
+  //cnfOut << "p cnf \n";
+ 
+
+ // Sperichert die Bits der Eingabegewichte
+ std::map<int, std::vector<uint32_t>> bitLayers;
+ 
+ // das ist wichtig:
+ for (size_t i = 0; i < weights.size(); ++i) {
+  auto bits = toBinary(weights[i]);
+    for (size_t bit = 0; bit < bits.size(); ++bit) {
+      if (bits[bit]) {
+        bitLayers[bit].push_back(blockings[i] ^ 1);
+      }
+    }
+  }
+
+  // Dieser Teil stell eine Äquivalenzbeziehung, bracut es wahrscheinlich nicht:
+  /*// Stellt eine Äquivalenzbeziehung her (Debug-CNF):
+for (size_t i = 0; i < softClauses.size(); i++) {
+    auto sc = softClauses[i];
+    unsigned int blockingLit = blockings[i];
+    std::vector<unsigned int> disjClause = { blockingLit ^ 1 }; 
+    for (int lit : sc->clause) {
+        disjClause.push_back(static_cast<unsigned int>(lit));
+    }
+    writeClause(cnfOut, disjClause, numClauses, maxVar);
+    
+    for (int lit : sc->clause) {
+      std::vector<unsigned int> helperClause = {
+        static_cast<unsigned int>(lit ^ 1),
+        blockingLit
+      };
+      writeClause(cnfOut, helperClause, numClauses, maxVar);
+    }
+  }
+
+for (size_t i = 0; i < softClauses.size(); i++) {
+  auto sc = softClauses[i];
+  unsigned int blockingLit = blockings[i];
+  S.NewClause();
+  S.AddLiteral(blockingLit ^ 1); 
+  for (int lit : sc->clause) {
+    S.AddLiteral(static_cast<unsigned int>(lit)); 
+  }
+  S.CommitClause();
+  for (int lit : sc->clause) {
+    S.NewClause();
+    S.AddLiteral(static_cast<unsigned int>(lit ^ 1)); 
+    S.AddLiteral(blockingLit);                       
+    S.CommitClause();
+  }
+}*/
+
+
+// Debug-Ausgabe:
+std::cout << "Initiale Bit-Ebenen:\n";
+for (const auto& [bit, vec] : bitLayers) {
+  std::cout << "  Bit " << bit << ": ";
+  for (uint32_t lit : vec) {
+    std::cout << "x" << (lit >> 1) << ((lit & 1) ? "¬ " : " ");
+  }
+  std::cout << "\n";
+}
+
+
+   
+std::map<int, std::vector<uint32_t>> current = bitLayers;
+std::map<int, std::vector<uint32_t>> next;
+
+while (true) {
+  bool changed = false;
+  next.clear();
+
+  for (auto &[bit, vec] : current) {
+    size_t i = 0;
+    while (i + 2 < vec.size()) {
+      uint32_t a = vec[i++], b = vec[i++], c = vec[i++];
+      uint32_t sum = S.NewVariable() << 1;
+      uint32_t carry = S.NewVariable() << 1;
+      
+      S.ResetClause();
+      S.NewClause();
+      S.AddLiteral(a ^ 1);
+      S.AddLiteral(b ^ 1);
+      S.AddLiteral(c ^ 1);
+      S.AddLiteral(sum);
+      S.CommitClause();
+
+      S.ResetClause();
+      S.NewClause();
+      S.AddLiteral(a);
+      S.AddLiteral(b);
+      S.AddLiteral(c ^ 1);
+      S.AddLiteral(sum);
+      S.CommitClause();
+
+      S.ResetClause();
+      S.NewClause();
+      S.AddLiteral(a);
+      S.AddLiteral(b ^ 1);
+      S.AddLiteral(c);
+      S.AddLiteral(sum);
+      S.CommitClause();
+
+      S.ResetClause();
+      S.NewClause();
+      S.AddLiteral(a ^ 1);
+      S.AddLiteral(b);
+      S.AddLiteral(c);
+      S.AddLiteral(sum);
+      S.CommitClause();
+
+
+
+      S.ResetClause();
+      S.NewClause();
+      S.AddLiteral(a);
+      S.AddLiteral(b);
+      S.AddLiteral(c);
+      S.AddLiteral(sum ^ 1);
+      S.CommitClause();
+
+
+      S.ResetClause();
+      S.NewClause();
+      S.AddLiteral(a);
+      S.AddLiteral(b ^ 1);
+      S.AddLiteral(c ^ 1);
+      S.AddLiteral(sum ^ 1);
+      S.CommitClause();
+
+      S.ResetClause();
+      S.NewClause();
+      S.AddLiteral(a ^ 1);
+      S.AddLiteral(b);
+      S.AddLiteral(c ^ 1);
+      S.AddLiteral(sum ^ 1);
+      S.CommitClause();
+
+      S.ResetClause();
+      S.NewClause();
+      S.AddLiteral(a ^ 1);
+      S.AddLiteral(b ^ 1);
+      S.AddLiteral(c);
+      S.AddLiteral(sum ^ 1);
+      S.CommitClause();
+
+ 
+                
+      writeClause(cnfOut, {a ^ 1, b ^ 1, c ^ 1, sum}, numClauses, maxVar);
+      writeClause(cnfOut, {a, b, c ^ 1, sum}, numClauses, maxVar);
+      writeClause(cnfOut, {a, b ^ 1, c, sum}, numClauses, maxVar);
+      writeClause(cnfOut, {a ^ 1, b, c, sum}, numClauses, maxVar);
+
+      writeClause(cnfOut, {a, b, c, sum ^ 1}, numClauses, maxVar);
+      writeClause(cnfOut, {a, b ^ 1, c ^ 1, sum ^ 1}, numClauses, maxVar);
+      writeClause(cnfOut, {a ^ 1, b, c ^ 1, sum ^ 1}, numClauses, maxVar);
+      writeClause(cnfOut, {a ^ 1, b ^ 1, c, sum ^ 1}, numClauses, maxVar);
+      
+      writeClause(cnfOut, {b ^ 1, c ^ 1, carry}, numClauses, maxVar);
+      writeClause(cnfOut, {a ^ 1, b ^ 1, carry}, numClauses, maxVar);
+      writeClause(cnfOut, {a ^ 1, c ^ 1, carry}, numClauses, maxVar);
+
+
+      writeClause(cnfOut, {b, c, carry ^ 1}, numClauses, maxVar);
+      writeClause(cnfOut, {a, b, carry ^ 1}, numClauses, maxVar);
+      writeClause(cnfOut, {a, c, carry ^ 1}, numClauses, maxVar);
+            
+      S.ResetClause(); S.NewClause(); S.AddLiteral(a ^ 1); S.AddLiteral(b ^ 1); S.AddLiteral(carry); S.CommitClause();
+      S.ResetClause(); S.NewClause(); S.AddLiteral(a ^ 1); S.AddLiteral(c ^ 1); S.AddLiteral(carry); S.CommitClause();
+      S.ResetClause(); S.NewClause(); S.AddLiteral(b ^ 1); S.AddLiteral(c ^ 1); S.AddLiteral(carry); S.CommitClause();
+
+      S.ResetClause(); S.NewClause(); S.AddLiteral(a); S.AddLiteral(b); S.AddLiteral(carry ^ 1); S.CommitClause();
+      S.ResetClause(); S.NewClause(); S.AddLiteral(a); S.AddLiteral(c); S.AddLiteral(carry ^ 1); S.CommitClause();
+      S.ResetClause(); S.NewClause(); S.AddLiteral(b); S.AddLiteral(c); S.AddLiteral(carry ^ 1); S.CommitClause();
+
+            
+
+      next[bit].push_back(sum);
+      next[bit + 1].push_back(carry);
+      changed = true;
+    }
+    
+    while (i < vec.size()) next[bit].push_back(vec[i++]);
+  }
+  if (!changed) break;
+  current = next;
+}
+
+
+// lit_zero: 
+// Falls A und B ungleich sind, wird es mit lit_zero aufgefüllt:
+uint32_t lit_zero = S.NewVariable() << 1;
+
+auto simplified = [&](std::vector<uint32_t> clause) {
+      std::vector<uint32_t> filtered;
+      bool isAlwaysTrue = false;
+      for (uint32_t lit : clause) {
+        if (lit == (lit_zero ^ 1)) {
+          isAlwaysTrue = true;
+          break;
+        } else if (lit != lit_zero) {
+          filtered.push_back(lit);
+        }
+      }
+
+      if (isAlwaysTrue) {
+        // Diese Klausel ist immer erfüllt – tue nichts
+        return;
+      }
+
+      if (filtered.empty()) {
+        std::cerr << "[WARN] simplified(): Leere Klausel erzeugt → CNF ist UNSAT.\n";
+        S.ResetClause(); S.NewClause(); S.CommitClause();
+        writeClause(cnfOut, {}, numClauses, maxVar);
+        return;
+      }
+
+      // Normale gültige Klausel
+      S.ResetClause(); S.NewClause();
+      for (uint32_t lit : filtered) S.AddLiteral(lit);
+      S.CommitClause();
+      writeClause(cnfOut, filtered, numClauses, maxVar);
+    };
+
+
+
+//std::cout << "lit_zero: x" << (lit_zero >> 1) << std::endl;
+//simplified({lit_zero ^ 1});
+//S.ResetClause(); S.NewClause(); S.AddLiteral(lit_zero ^ 1); S.CommitClause(); // = false
+//writeClause(cnfOut, {lit_zero ^ 1}, numClauses, maxVar);
+
+std::vector<uint32_t> A, B;
+for (auto &[bit, vec] : current) {
+  if (vec.size() == 1) {
+    if (bit >= A.size()) A.resize(bit + 1, lit_zero);
+    A[bit] = vec[0];
+  } else if (vec.size() == 2) {
+    if (bit >= A.size()) A.resize(bit + 1, lit_zero);
+        if (bit >= B.size()) B.resize(bit + 1, lit_zero);
+        A[bit] = vec[0];
+        B[bit] = vec[1];
+      } else if (vec.size() > 2) {
+        std::cerr << "Fehler: mehr als zwei Literale in Bit-Position " << bit << std::endl;
+        return;
+      }
+    }
+    
+    std::cout << "Summen und Carry-Bits:\n";
+    for (size_t i = 0; i < std::max(A.size(), B.size()); ++i) {
+        std::cout << "  Bit " << i << ": ";
+        if (i < A.size()) {
+            std::cout << "A = x" << (A[i] >> 1) << ((A[i] & 1) ? "¬ " : " ");
+        } else {
+            std::cout << "A = - ";
+        }
+        if (i < B.size()) {
+            std::cout << "B = x" << (B[i] >> 1) << ((B[i] & 1) ? "¬" : "") << "\n";
+        } else {
+            std::cout << "B = -\n";
+        }
+    }
+    
+    
+    // Carry - Rippple addierer:
+
+    //std::cout << "### Carry - Ripple -Aaddierer ###" << std::endl;
+    size_t bitCount = std::max(A.size(), B.size());
+
+    // Beim ersten FA, ist das Carry = lit_zero:
+    uint32_t c = lit_zero;
+
+    
+
+
+    for (size_t i = 0; i < bitCount; i++) {
+        uint32_t a = (i < A.size()) ? A[i] : lit_zero;
+        uint32_t b = (i < B.size()) ? B[i] : lit_zero;
+        uint32_t sum = S.NewVariable() << 1;
+        uint32_t carry = S.NewVariable() << 1;
+
+
+        simplified({a ^ 1, b ^ 1, c ^ 1, sum});
+        /* S.ResetClause();
+        S.NewClause();
+        S.AddLiteral(a ^ 1);
+        S.AddLiteral(b ^ 1);
+        S.AddLiteral(c ^ 1);
+        S.AddLiteral(sum);
+        S.CommitClause();*/
+       
+        
+        simplified({a, b, c ^ 1, sum});
+        /*S.ResetClause();
+        S.NewClause();
+        S.AddLiteral(a);
+        S.AddLiteral(b);
+        S.AddLiteral(c ^ 1);
+        S.AddLiteral(sum);
+        S.CommitClause();*/
+        
+
+        simplified({a, b ^ 1, c, sum});
+        /*S.ResetClause();
+        S.NewClause();
+        S.AddLiteral(a);
+        S.AddLiteral(b ^ 1);
+        S.AddLiteral(c);
+        S.AddLiteral(sum);
+        S.CommitClause();*/
+        
+
+        simplified({a ^ 1, b, c, sum});
+        /*S.ResetClause();
+        S.NewClause();
+        S.AddLiteral(a ^ 1);
+        S.AddLiteral(b);
+        S.AddLiteral(c);
+        S.AddLiteral(sum);
+        S.CommitClause();*/
+        
+        
+        //writeClause(cnfOut, {a ^ 1, b ^ 1, c ^ 1, sum}, numClauses, maxVar);
+        //writeClause(cnfOut, {a, b, c ^ 1, sum}, numClauses, maxVar);
+        //writeClause(cnfOut, {a, b ^ 1, c, sum}, numClauses, maxVar);
+        //writeClause(cnfOut, {a ^ 1, b, c, sum}, numClauses, maxVar);
+        
+        simplified({a, b, c, sum ^ 1});
+        /*S.ResetClause();
+        S.NewClause();
+        S.AddLiteral(a);
+        S.AddLiteral(b);
+        S.AddLiteral(c);
+        S.AddLiteral(sum ^ 1);
+        S.CommitClause();*/
+        
+        simplified({a, b ^ 1, c ^ 1, sum ^ 1});
+        /*S.ResetClause();
+        S.NewClause();
+        S.AddLiteral(a);
+        S.AddLiteral(b ^ 1);
+        S.AddLiteral(c ^ 1);
+        S.AddLiteral(sum ^ 1);
+        S.CommitClause();*/
+        
+        simplified({a ^ 1, b, c ^ 1, sum ^ 1});
+       /* S.ResetClause();
+        S.NewClause();
+        S.AddLiteral(a ^ 1);
+        S.AddLiteral(b);
+        S.AddLiteral(c ^ 1);
+        S.AddLiteral(sum ^ 1);
+        S.CommitClause();*/
+        
+        simplified({a ^ 1, b ^ 1, c, sum ^ 1});
+        /*S.ResetClause();
+        S.NewClause();
+        S.AddLiteral(a ^ 1);
+        S.AddLiteral(b ^ 1);
+        S.AddLiteral(c);
+        S.AddLiteral(sum ^ 1);
+        S.CommitClause();*/
+        
+        /*writeClause(cnfOut, {a, b, c, sum ^ 1}, numClauses, maxVar);
+        writeClause(cnfOut, {a, b ^ 1, c ^ 1, sum ^ 1}, numClauses, maxVar);
+        writeClause(cnfOut, {a ^ 1, b, c ^ 1, sum ^ 1}, numClauses, maxVar);
+        writeClause(cnfOut, {a ^ 1, b ^ 1, c, sum ^ 1}, numClauses, maxVar);*/
+        
+        simplified({a ^ 1, b ^ 1, carry});
+        //S.ResetClause(); S.NewClause(); S.AddLiteral(a ^ 1); S.AddLiteral(b ^ 1); S.AddLiteral(carry); S.CommitClause();
+        simplified({a ^ 1, c ^ 1, carry});
+        //S.ResetClause(); S.NewClause(); S.AddLiteral(a ^ 1); S.AddLiteral(c ^ 1); S.AddLiteral(carry); S.CommitClause();
+        simplified({b ^ 1, c ^ 1, carry});
+       // S.ResetClause(); S.NewClause(); S.AddLiteral(b ^ 1); S.AddLiteral(c ^ 1); S.AddLiteral(carry); S.CommitClause();
+        
+        /*writeClause(cnfOut, {b ^ 1, c ^ 1, carry}, numClauses, maxVar);
+        writeClause(cnfOut, {a ^ 1, b ^ 1, carry}, numClauses, maxVar);
+        writeClause(cnfOut, {a ^ 1, c ^ 1, carry}, numClauses, maxVar);*/
+        
+        simplified({b, c, carry ^ 1});
+        //S.ResetClause(); S.NewClause(); S.AddLiteral(b); S.AddLiteral(c); S.AddLiteral(carry ^ 1); S.CommitClause();
+        simplified({a, b, carry ^ 1});
+       // S.ResetClause(); S.NewClause(); S.AddLiteral(a); S.AddLiteral(b); S.AddLiteral(carry ^ 1); S.CommitClause();
+        simplified({a, c, carry ^ 1});
+       // S.ResetClause(); S.NewClause(); S.AddLiteral(a); S.AddLiteral(c); S.AddLiteral(carry ^ 1); S.CommitClause();
+        
+        /*writeClause(cnfOut, {b, c, carry ^ 1}, numClauses, maxVar);
+        writeClause(cnfOut, {a, b, carry ^ 1}, numClauses, maxVar);
+        writeClause(cnfOut, {a, c, carry ^ 1}, numClauses, maxVar);*/
+        
+        
+        linkingVar.push_back(sum);
+        linkingWeight.push_back(1LL << i);
+
+        // weitergabe des carrys an nächsten FA:
+        c = carry;
+        
+        if (i == bitCount - 1) { linkingVar.push_back(c);
+          linkingWeight.push_back(1LL << bitCount);}
+        
+        }
+        
+        std::cout << "linkingVar:\n";
+        for (size_t i = 0; i < linkingVar.size(); ++i)
+        std::cout << "  Bit " << i << ": x" << (linkingVar[i] >> 1)
+        << ", weight = " << linkingWeight[i] << "\n";
+        std::cout << "Wallace-Tree & Carry Ripple abgeschlossen." << std::endl;
+      
+}
+
+
+/*
+void Encodings::genWallace(
+    std::vector<long long int> &weights,
+    std::vector<uint32_t> &blockings,
+    long long int max,
+    int k,
+    SATSolverProxy &S,
+    std::vector<uint32_t> &lits,
+    std::vector<uint32_t> &linkingVar,
+    std::vector<long long int> &linkingWeight
+) {
+
+  //std::ofstream cnfOut("debug_output.cnf");
+  //std::streampos headerPos = cnfOut.tellp();  // Position merken
+  //cnfOut << "p cnf 0 0\n";                     // Platzhalter (wird überschrieben)
+
+  //std::ofstream cnfOut("/Users/Mathias/Desktop/bachelor_arbeit/PacoseMaxSATSolver/output.cnf");
+  //cnfOut << "p cnf 0 0\n"; // Platzhalter-Header
+  //int numClauses = 0, maxVar = 0;
+  //cnfOut << "p cnf 000 000\n";  // Platzhalter-Header mit exakt 13 Zeichen (inkl. \n)
+
+  linkingVar.clear(); linkingWeight.clear();
+
+    
+    std::cout << "DEBUG: Alle übergebenen Gewichte: test test test ####" << std::endl;
+    for (size_t i = 0; i < weights.size(); ++i) {
+        std::cout << "Literal x" << (blockings[i] >> 1)
+                  << " → Gewicht: " << weights[i]
+                  << " → Binär: [";
+        auto bits = toBinary(weights[i]);
+        for (size_t j = 0; j < bits.size(); ++j) {
+            std::cout << bits[j];
+            if (j + 1 < bits.size()) std::cout << ", ";
+        }
+        std::cout << "]" << std::endl;
+    }
+
+    //std::cout << "Wallace-Addierer (k = " << k << ")" << std::endl;
+
+    if (weights.size() != blockings.size()) {
+       std::cerr << "Fehler: weights und blockings passen nicht zusammen" << std::endl;
+       return;
+   }
+    
+    // Initiale Sortierung der Literale in Bit-Ebenen gemäß ihrem Gewicht.
+    // Zurzeit unnütz.
+    std::map<int, std::vector<uint32_t>> bitLayers;
+    //for (size_t i = 0; i < weights.size(); ++i) {
+        //auto bits = toBinary(weights[i]);
+       // for (size_t bit = 0; bit < bits.size(); ++bit) {
+            //if (bits[bit]) {
+            //  bitLayers[bit].push_back(blockings[i]);
+           
+           // }
+        //}
+    //}
+
+    for (size_t i = 0; i < weights.size(); ++i) {
+    auto bits = toBinary(weights[i]);
+    for (size_t bit = 0; bit < bits.size(); ++bit) {
+        if (bits[bit]) {
+            uint32_t freshBitLit = S.NewVariable() << 1;
+
+            // Verknüpfe freshBitLit ⇔ blockings[i]
+            S.ResetClause(); S.NewClause(); S.AddLiteral(freshBitLit ^ 1); S.AddLiteral(blockings[i]); S.CommitClause();
+            S.ResetClause(); S.NewClause(); S.AddLiteral(freshBitLit); S.AddLiteral(blockings[i] ^ 1); S.CommitClause();
+
+            bitLayers[bit].push_back(freshBitLit);
+        }
+    }
+}
+
+    std::map<int, std::vector<uint32_t>> current = bitLayers;
+    std::map<int, std::vector<uint32_t>> next;
+
+    while (true) {
+        bool reduced = false;
+        next.clear();
+        // Ebenen bezeichung passt noch nicht:
+        //std::cout << "CSA:" << std::endl;
+        //for (auto &[bit, lits] : current) {
+           // std::cout << "  Bit " << bit << ": ";
+           // for (auto l : lits) std::cout << "x" << (l >> 1) << " ";
+           // std::cout << std::endl;
+      //  }
+
+        for (auto &[bit, lits] : current) {
+            size_t i = 0;
+            while (i + 2 < lits.size()) {
+                uint32_t a = lits[i++], b = lits[i++], c = lits[i++];
+                
+                uint32_t sum = S.NewVariable() << 1;
+                uint32_t carry = S.NewVariable() << 1;
+
+               // std::cout << "Ebene test test test" << bit<< ": FA(" << (a >> 1) << ", " << (b >> 1) << ", " << (c >> 1)
+                          //<< ") → sum: x" << (sum >> 1) << ", carry: x" << (carry >> 1) << std::endl;
+
+               // std::cout << "a: " << litToStr(a) << " b: " << litToStr(b) << " c: " << litToStr(c) << std::endl;
+
+                S.ResetClause();
+                S.NewClause();
+                S.AddLiteral(a);
+                S.AddLiteral(b);
+                S.AddLiteral(c ^ 1);
+                S.AddLiteral(sum);
+                S.CommitClause();
+                writeClause(cnfOut, {a, b, c ^ 1, sum}, numClauses, maxVar);
+
+                S.ResetClause();
+                S.NewClause();
+                S.AddLiteral(a);
+                S.AddLiteral(b ^ 1);
+                S.AddLiteral(c);
+                S.AddLiteral(sum);
+                S.CommitClause();
+                writeClause(cnfOut, {a, b ^ 1, c, sum}, numClauses, maxVar);
+
+                S.ResetClause();
+                S.NewClause();
+                S.AddLiteral(a ^ 1);
+                S.AddLiteral(b);
+                S.AddLiteral(c);
+                S.AddLiteral(sum);
+                S.CommitClause();
+                writeClause(cnfOut, {a ^ 1, b, c, sum}, numClauses, maxVar);
+
+                S.ResetClause();
+                S.NewClause();
+                S.AddLiteral(a ^ 1);
+                S.AddLiteral(b ^ 1);
+                S.AddLiteral(c ^ 1);
+                S.AddLiteral(sum);
+                S.CommitClause();
+                writeClause(cnfOut, {a ^ 1, b ^ 1, c ^ 1, sum}, numClauses, maxVar);
+
+                S.ResetClause();
+                S.NewClause();
+                S.AddLiteral(a ^ 1);
+                S.AddLiteral(b ^ 1);
+                S.AddLiteral(carry);
+                S.CommitClause();
+                writeClause(cnfOut, {a ^ 1, b ^ 1, carry}, numClauses, maxVar);
+
+                S.ResetClause();
+                S.NewClause();
+                S.AddLiteral(a ^ 1);
+                S.AddLiteral(c ^ 1);
+                S.AddLiteral(carry);
+                S.CommitClause();
+                writeClause(cnfOut, {a ^ 1, c ^ 1, carry}, numClauses, maxVar);
+
+                S.ResetClause();
+                S.NewClause();
+                S.AddLiteral(b ^ 1);
+                S.AddLiteral(c ^ 1);
+                S.AddLiteral(carry);
+                S.CommitClause();
+                writeClause(cnfOut, {b ^ 1, c ^ 1, carry}, numClauses, maxVar);
+               
+
+                next[bit].push_back(sum);
+                next[bit + 1].push_back(carry);
+                reduced = true;
+            }
+            while (i < lits.size()) next[bit].push_back(lits[i++]);
+        }
+
+        if (!reduced) break;
+        current = next;
+    }
+
+    std::cout << "Carry - Ripple - Addierer" << std::endl;
+
+    
+
+    std::vector<uint32_t> A, B;
+    for (auto &[bit, vec] : current) {
+        if (vec.size() == 1) A.resize(std::max<size_t>(A.size(), bit + 1)), A[bit] = vec[0];
+        else if (vec.size() == 2) {
+            A.resize(std::max<size_t>(A.size(), bit + 1));
+            B.resize(std::max<size_t>(B.size(), bit + 1));
+            A[bit] = vec[0];
+            B[bit] = vec[1];
+        }
+    }
+
+    for (size_t i = 0; i < std::max(A.size(), B.size()); ++i) {
+        std::cout << "Ripple-Input Bit " << i << ": A=";
+        if (i < A.size()) std::cout << "x" << (A[i] >> 1);
+        else std::cout << "-";
+
+        std::cout << ", B=";
+        if (i < B.size()) std::cout << "x" << (B[i] >> 1);
+        else std::cout << "-";
+        std::cout << std::endl;
+    }
+
+    size_t bitCount = std::max(A.size(), B.size());
+
+    linkingVar.clear();
+    uint32_t carry = S.NewVariable() << 1;
+    S.ResetClause(); S.NewClause(); S.AddLiteral(carry ^ 1); S.CommitClause();
+    writeClause(cnfOut, {carry ^ 1}, numClauses, maxVar);
+
+    for (size_t i = 0; i < std::max(A.size(), B.size()); ++i) {
+    bool hasA = i < A.size();
+    bool hasB = i < B.size();
+    uint32_t a = hasA ? A[i] : 0;
+    uint32_t b = hasB ? B[i] : 0;
+
+   
+
+    // Wenn einer von beiden fehlt, ersetze durch carry + den anderen
+    if (!hasA && hasB) {
+        // a fehlt, b vorhanden → sum = b ⊕ carry
+        a = b;
+        b = carry;
+        carry = S.NewVariable() << 1;
+    } else if (hasA && !hasB) {
+        // b fehlt, a vorhanden → sum = a ⊕ carry
+        b = carry;
+        carry = S.NewVariable() << 1;
+    } else if (!hasA && !hasB) {
+        // beide fehlen → sum = carry, newCarry = false
+        linkingVar.push_back(carry);
+        //linkingWeight.push_back(1LL << i); 
+        carry = 0;
+        continue;
+    }
+
+    uint32_t sum = S.NewVariable() << 1;
+    uint32_t newCarry = S.NewVariable() << 1;
+
+    // Wie gehabt – CNF-Formeln erzeugen:
+    // Summe-Bedingungen
+    S.ResetClause(); S.NewClause(); S.AddLiteral(a); S.AddLiteral(b); S.AddLiteral(carry); S.AddLiteral(sum); S.CommitClause();
+    writeClause(cnfOut, {a, b, carry, sum}, numClauses, maxVar);
+
+    S.ResetClause(); S.NewClause(); S.AddLiteral(a ^ 1); S.AddLiteral(b ^ 1); S.AddLiteral(carry); S.AddLiteral(sum); S.CommitClause();
+    writeClause(cnfOut, {a ^ 1, b ^ 1, carry, sum}, numClauses, maxVar);
+
+    S.ResetClause(); S.NewClause(); S.AddLiteral(a ^ 1); S.AddLiteral(b); S.AddLiteral(carry ^ 1); S.AddLiteral(sum); S.CommitClause();
+    writeClause(cnfOut, {a ^ 1, b, carry ^ 1, sum}, numClauses, maxVar);
+
+    S.ResetClause(); S.NewClause(); S.AddLiteral(a); S.AddLiteral(b ^ 1); S.AddLiteral(carry ^ 1); S.AddLiteral(sum); S.CommitClause();
+    writeClause(cnfOut, {a, b ^ 1, carry ^ 1, sum}, numClauses, maxVar);
+
+    // Majority für Carry (wie gehabt)
+    S.ResetClause(); S.NewClause(); S.AddLiteral(a); S.AddLiteral(b); S.AddLiteral(newCarry ^ 1); S.CommitClause();
+    writeClause(cnfOut, {a, b, newCarry ^ 1}, numClauses, maxVar);
+
+    S.ResetClause(); S.NewClause(); S.AddLiteral(a); S.AddLiteral(carry); S.AddLiteral(newCarry ^ 1); S.CommitClause();
+    writeClause(cnfOut, {a, carry, newCarry ^ 1}, numClauses, maxVar);
+
+    S.ResetClause(); S.NewClause(); S.AddLiteral(b); S.AddLiteral(carry); S.AddLiteral(newCarry ^ 1); S.CommitClause();
+    writeClause(cnfOut, {b, carry, newCarry ^ 1}, numClauses, maxVar);
+
+    S.ResetClause(); S.NewClause(); S.AddLiteral(a ^ 1); S.AddLiteral(b ^ 1); S.AddLiteral(newCarry); S.CommitClause();
+    writeClause(cnfOut, {a ^ 1, b ^ 1, newCarry}, numClauses, maxVar);
+
+    S.ResetClause(); S.NewClause(); S.AddLiteral(a ^ 1); S.AddLiteral(carry ^ 1); S.AddLiteral(newCarry); S.CommitClause();
+    writeClause(cnfOut, {a ^ 1, carry ^ 1, newCarry}, numClauses, maxVar);
+
+    S.ResetClause(); S.NewClause(); S.AddLiteral(b ^ 1); S.AddLiteral(carry ^ 1); S.AddLiteral(newCarry); S.CommitClause();
+    writeClause(cnfOut, {b ^ 1, carry ^ 1, newCarry}, numClauses, maxVar);
+
+   
+
+    linkingVar.push_back(sum);
+    linkingWeight.push_back(1LL << i);  // Gewicht = 2^i
+
+  
+    carry = newCarry;
+}
+
+
+    // if (carry) linkingVar.push_back(carry);
+
+    if (carry) {
+    linkingVar.push_back(carry);
+    linkingWeight.push_back(1LL << bitCount);
+    //std::cout << "[DEBUG] linkingVar x" << (carry >> 1)
+           //   << " → Gewicht: " << (1LL << bitCount) << std::endl;
+//}
+
+
+    for (size_t i = 0; i < linkingVar.size(); ++i) {
+        std::cout << "Bit " << i << "Literal: x" << (linkingVar[i] >> 1) << std::endl;
+    }
+
+    //std::vector<int> boundBits = toBinary(k);
+    //encodeLessEqual(linkingVar, boundBits, S, -1, &cnfOut, numClauses, maxVar); 
+
+    // for (size_t i = 0; i < linkingVar.size(); ++i) {
+       // std::cout << "LinkingVar[Bit " << i << "] = " << litToStr(linkingVar[i]) << std::endl;
+   // }
+
+    //this->cachedWallaceBits.clear();
+    //this->cachedWallaceBits = linkingVar;
+
+    //std::cout << "[DEBUG] cachedWallaceBits gesetzt: ";
+    //for (auto lit : this->cachedWallaceBits)
+       // std::cout << (lit >> 1) << " ";
+    //std::cout << std::endl;
+
+   
+
+
+    // CNF-Datei schließen und Header aktualisieren
+  //cnfOut.close();  // Erst schließen
+
+  // Dann wieder öffnen – diesmal zum Überschreiben der ersten Zeile
+  //std::fstream headerFix("output.cnf", std::ios::in | std::ios::out);
+  //std::fstream headerFix("/Users/Mathias/Desktop/bachelor_arbeit/PacoseMaxSATSolver/output.cnf", std::ios::in | std::ios::out);
+
+  
+   // Zurück zum Dateianfang und Header schreiben
+      //cnfOut.seekp(headerPos);  // Zurück zur Position vom Header
+     // cnfOut << "p cnf " << maxVar << " " << numClauses << "\n";
+
+
+    std::cout << "Wallace-Tree & Carry-Ripple abgeschlossen." << std::endl;
+}}
+*/
+
+  //cnfOut.seekp(headerPos);
+ // cnfOut << "p cnf " << maxVar << " " << numClauses << "\n";
+  //cnfOut.close();
+
+/*void Encodings::encodeLessEqual(const std::vector<int>& sum,
+    const std::vector<int>& bound,
+    SATSolverProxy& S,
+    int relaxLit,
+    std::ofstream* cnfOut,
+    int& numClauses,
+    int& maxVar) {
+
+    std::cout << "encodeLessEqual: sum <= bound" << std::endl;
+
+    int len_sum = sum.size();
+    int len_bound = boundBits.size();
+    int max_len = std::max(len_sum, len_bound);
+
+    std::vector<int> a(max_len, 0);  // sum (evtl. erweitert)
+    std::vector<int> b(max_len, 0);  // bound (als fixe Literale)
+    std::vector<int> q(max_len, 0);  // Vergleichsvariablen
+
+    // Fülle a[] und b[] auf gleiche Länge
+    for (int i = 0; i < max_len; ++i) {
+        a[i] = (i < len_sum) ? sum[i] : (S.NewVariable() << 1);  // Dummy-Literal
+
+        if (i < len_bound) {
+            if (boundBits[i] == 0) {
+                b[i] = S.NewVariable() << 1;
+                S.NewClause(); S.AddLiteral(b[i] ^ 1); S.CommitClause();  // b[i] = FALSE
+            } else if (boundBits[i] == 1) {
+                b[i] = S.NewVariable() << 1;
+                S.NewClause(); S.AddLiteral(b[i]); S.CommitClause();      // b[i] = TRUE
+            } else {
+                // Sollte nie passieren
+                std::cerr << "Fehler: boundBits[" << i << "] ist kein konstantes Bit (0/1)" << std::endl;
+                return;
+            }
+        } else {
+            // Auffüllen mit 0 (b[i] = FALSE)
+            b[i] = S.NewVariable() << 1;
+            S.NewClause(); S.AddLiteral(b[i] ^ 1); S.CommitClause();
+        }
+    }
+
+    // Initialisiere Vergleichsbit q[0]
+    q[0] = S.NewVariable() << 1;
+
+    // Erste Bitposition – vergleich a[0] ≤ b[0]
+    S.NewClause(); S.AddLiteral(a[0]); S.AddLiteral(b[0] ^ 1); if (relaxLit >= 0) S.AddLiteral(relaxLit); S.AddLiteral(q[0]); S.CommitClause();
+    S.NewClause(); S.AddLiteral(a[0]); S.AddLiteral(b[0]);     if (relaxLit >= 0) S.AddLiteral(relaxLit); S.AddLiteral(q[0]); S.CommitClause();
+    S.NewClause(); S.AddLiteral(a[0] ^ 1); S.AddLiteral(b[0] ^ 1); if (relaxLit >= 0) S.AddLiteral(relaxLit); S.AddLiteral(q[0]); S.CommitClause();
+    S.NewClause(); S.AddLiteral(a[0] ^ 1); S.AddLiteral(b[0]);     if (relaxLit >= 0) S.AddLiteral(relaxLit); S.AddLiteral(q[0] ^ 1); S.CommitClause();
+
+    // Folge-Bits
+    for (int i = 1; i < max_len; ++i) {
+        q[i] = S.NewVariable() << 1;
+
+        // alle 6 Vergleichs-Fälle
+        S.NewClause(); S.AddLiteral(a[i]);     S.AddLiteral(b[i] ^ 1);              if (relaxLit >= 0) S.AddLiteral(relaxLit); S.AddLiteral(q[i]);     S.CommitClause();
+        S.NewClause(); S.AddLiteral(b[i]);     S.AddLiteral(a[i]);                  S.AddLiteral(q[i - 1] ^ 1); if (relaxLit >= 0) S.AddLiteral(relaxLit); S.AddLiteral(q[i]); S.CommitClause();
+        S.NewClause(); S.AddLiteral(a[i] ^ 1); S.AddLiteral(b[i] ^ 1);              S.AddLiteral(q[i - 1] ^ 1); if (relaxLit >= 0) S.AddLiteral(relaxLit); S.AddLiteral(q[i]); S.CommitClause();
+        S.NewClause(); S.AddLiteral(a[i] ^ 1); S.AddLiteral(b[i]);                  if (relaxLit >= 0) S.AddLiteral(relaxLit); S.AddLiteral(q[i] ^ 1); S.CommitClause();
+        S.NewClause(); S.AddLiteral(a[i] ^ 1); S.AddLiteral(q[i - 1]);              if (relaxLit >= 0) S.AddLiteral(relaxLit); S.AddLiteral(q[i] ^ 1); S.CommitClause();
+        S.NewClause(); S.AddLiteral(b[i]);     S.AddLiteral(q[i - 1]);              if (relaxLit >= 0) S.AddLiteral(relaxLit); S.AddLiteral(q[i] ^ 1); S.CommitClause();
+    }
+
+    // Letztes q muss TRUE sein: sum <= bound erfüllt
+    S.NewClause(); S.AddLiteral(q[max_len - 1]); S.CommitClause();
+}
+*/
+
+
+
+
+
+
+
+
 void Encodings::genWarnersHalf(uint32_t &a, uint32_t &b, uint32_t &carry,
                                uint32_t &sum, int comp, SATSolverProxy &S,
                                std::vector<uint32_t> &lits) {
-  //  std::cout << "GWH " << comp << std::endl;
+
+  std::cout << "c ENTERED genWarnersHalf" << std::endl;                            
+  std::cout << "GWH " << comp << std::endl;
   // carry
   S.ResetClause();
   S.NewClause();
@@ -363,7 +1539,7 @@ void Encodings::genWarnersHalf(uint32_t &a, uint32_t &b, uint32_t &carry,
   S.AddLiteral(carry);
   S.CommitClause();
 
-  //  std::cout << (a ^ 1) << ", " << (b ^ 1) << ", " << carry << std::endl;
+  std::cout << (a ^ 1) << ", " << (b ^ 1) << ", " << carry << std::endl;
   // sum
   S.ResetClause();
   S.NewClause();
@@ -371,7 +1547,7 @@ void Encodings::genWarnersHalf(uint32_t &a, uint32_t &b, uint32_t &carry,
   S.AddLiteral(b ^ 1);
   S.AddLiteral(sum);
   S.CommitClause();
-  //  std::cout << (a) << ", " << (b ^ 1) << ", " << sum << std::endl;
+  std::cout << (a) << ", " << (b ^ 1) << ", " << sum << std::endl;
 
   S.ResetClause();
   S.NewClause();
@@ -379,7 +1555,7 @@ void Encodings::genWarnersHalf(uint32_t &a, uint32_t &b, uint32_t &carry,
   S.AddLiteral(b);
   S.AddLiteral(sum);
   S.CommitClause();
-  //  std::cout << (a ^ 1) << ", " << (b) << ", " << sum << std::endl;
+  std::cout << (a ^ 1) << ", " << (b) << ", " << sum << std::endl;
   //
   if (comp == 1 || comp == 2 || comp == 21 || comp == 30 || comp == 99) {
     S.ResetClause();
@@ -472,8 +1648,8 @@ void Encodings::genWarnersFull(uint32_t &a, uint32_t &b, uint32_t &c,
   S.AddLiteral(a ^ 1);
   S.AddLiteral(b ^ 1);
   S.AddLiteral(carry);
-
   S.CommitClause();
+
   S.ResetClause();
   S.NewClause();
   S.AddLiteral(a ^ 1);
@@ -487,9 +1663,9 @@ void Encodings::genWarnersFull(uint32_t &a, uint32_t &b, uint32_t &c,
   S.AddLiteral(c ^ 1);
   S.AddLiteral(carry);
   S.CommitClause();
-  //  std::cout << (a ^ 1) << ", " << (b ^ 1) << ", " << carry << std::endl;
-  //  std::cout << (a ^ 1) << ", " << (c ^ 1) << ", " << carry << std::endl;
-  //  std::cout << (b ^ 1) << ", " << (c ^ 1) << ", " << carry << std::endl;
+  // std::cout << (a ^ 1) << ", " << (b ^ 1) << ", " << carry << std::endl;
+  // std::cout << (a ^ 1) << ", " << (c ^ 1) << ", " << carry << std::endl;
+  // std::cout << (b ^ 1) << ", " << (c ^ 1) << ", " << carry << std::endl;
 
   // sum
   S.ResetClause();
@@ -523,14 +1699,14 @@ void Encodings::genWarnersFull(uint32_t &a, uint32_t &b, uint32_t &c,
   S.AddLiteral(c ^ 1);
   S.AddLiteral(sum);
   S.CommitClause();
-  //  std::cout << (a) << ", " << (b) << ", " << (c ^ 1) << ", " << sum
+  // std::cout << (a) << ", " << (b) << ", " << (c ^ 1) << ", " << sum
+  //           << std::endl;
+  // std::cout << (a) << ", " << (b ^ 1) << ", " << (c) << ", " << sum
   //            << std::endl;
-  //  std::cout << (a) << ", " << (b ^ 1) << ", " << (c) << ", " << sum
-  //            << std::endl;
-  //  std::cout << (a ^ 1) << ", " << (b) << ", " << (c) << ", " << sum
-  //            << std::endl;
-  //  std::cout << (a ^ 1) << ", " << (b ^ 1) << ", " << (c ^ 1) << ", " << sum
-  //            << std::endl;
+  // std::cout << (a ^ 1) << ", " << (b) << ", " << (c) << ", " << sum
+  //           << std::endl;
+  // std::cout << (a ^ 1) << ", " << (b ^ 1) << ", " << (c ^ 1) << ", " << sum
+  //           << std::endl;
 
   if (comp == 1 || comp == 2 || comp == 21 || comp == 30 || comp == 99) {
     S.ResetClause();
@@ -544,7 +1720,7 @@ void Encodings::genWarnersFull(uint32_t &a, uint32_t &b, uint32_t &c,
     S.NewClause();
     S.AddLiteral(carry);
     S.AddLiteral(sum);
-    S.AddLiteral(b ^ 1);
+    S.AddLiteral(b ^ 1);;
     S.CommitClause();
 
     S.ResetClause();
