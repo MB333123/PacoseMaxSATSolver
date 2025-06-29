@@ -31,6 +31,8 @@ THE SOFTWARE.
 #include "Settings.h"
 #include "vector"
 
+#include "Softclause.h" // Neu
+
 
 class SATSolverProxy;
 namespace Pacose {
@@ -47,6 +49,24 @@ class Encodings {
   // private:
   Settings *_settings;
   uint32_t _relaxLit;
+  // Neu:
+  std::vector<uint32_t> _assumptions;
+  std::vector<uint32_t> _aBits;
+
+  void UpdateAssumptionsForK(long long int k, const std::vector<uint32_t>& aBits, SATSolverProxy& S); // Neu
+  void genWallace(std::vector<long long int> &weights,
+                std::vector<uint32_t> &blockings,
+                long long int max,
+                int k,
+                SATSolverProxy &S,
+                std::vector<uint32_t> &lits,
+                std::vector<uint32_t> &linkingVar,
+                std::vector<long long int> &linkingWeight,
+                const std::vector<SoftClause*>& softClauses 
+                
+              ); // Neu
+
+ 
 
   // Warners adder encoding
   void genWarnersHalf(uint32_t &a, uint32_t &b, uint32_t &carry, uint32_t &sum,
@@ -203,6 +223,11 @@ class Encodings {
   long long med3(long long x, long long y, long long z);
   void quicksort(long long a[], int left, int right);
   long long sumWeight(std::vector<long long> &weights);
+
+ 
+
+  
+
 };
 } // Namespace Pacose
 

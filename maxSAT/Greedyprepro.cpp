@@ -79,7 +79,6 @@ GreedyPrepro::GreedyPrepro(std::vector<SoftClause *> &softClauses,
       _previousLowerBound(0.0),
       _noClauses(-1),
       _allWeightsSat(false),
-      _timeSolvedFirst(nullptr),
       _pos1Unsat(false) {
   _timeVariables = new DGPW::TimeVariables();
   //  _solver = SATSolverProxy::InitSATSolver(SATSolverType::GLUCOSE421);
@@ -90,8 +89,8 @@ GreedyPrepro::~GreedyPrepro() {
   // Pacose will be destroyed by application or main
   // Settings will be destroyed by Pacose
   // _softClauses will be destroyed by Pacose
-  delete _timeSolvedFirst;
-  delete _timeVariables;
+  //  delete _timeVariables;
+  //  delete _timeSolvedFirst;
 }
 
 uint32_t GreedyPrepro::NewVariable(void) {
