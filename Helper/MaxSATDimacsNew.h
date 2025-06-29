@@ -223,6 +223,15 @@ void parseWCNF(const std::string &wcnfFile, ClauseDB &clauseDB) {
     clauseDB.clauses.push_back(cl);
     clauseDB.weights.push_back(weight);
 
+    std::cout << "Clause (weight = "  // Neu
+          << (weight == UINT64_MAX ? "HARD" : std::to_string(weight)) 
+          << "): ";
+
+          for (int lit : cl) {
+              std::cout << lit << " ";
+          }
+          std::cout << "0" << std::endl;
+
     // if (weight == UINT64_MAX) {
 
     //   // std::cout << clauseDB.clauses.back()->literals.front() << std::endl;
